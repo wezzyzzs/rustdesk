@@ -59,15 +59,102 @@ class _DesktopHomePageState extends State<DesktopHomePage>
   Widget build(BuildContext context) {
     super.build(context);
     final isIncomingOnly = bind.isIncomingOnly();
+    // AnyDesk-style layout:
+    // [dark side nav] | [address bar on top / This Desk card + sessions grid]
     return _buildBlock(
         child: Row(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        buildLeftPane(context),
-        if (!isIncomingOnly) const VerticalDivider(width: 1),
+        if (isIncomingOnly) buildLeftPane(context),
+        if (!isIncomingOnly) _buildSideNav(context),
         if (!isIncomingOnly) Expanded(child: buildRightPane(context)),
       ],
     ));
+  }
+
+  /// Slim dark navigation rail on the far left (AnyDesk style).
+  Widget _buildSideNav(BuildContext context) {
+    Widget navItem({
+      required IconData icon,
+      required String tooltip,
+      required VoidCallback onTap,
+      bool selected = false,
+    }) {
+      final hover = false.obs;
+      return Tooltip(
+        message: tooltip,
+        waitDuration: const Duration(milliseconds: 400),
+        preferBelow: false,
+        child: InkWell(
+          onTap: onTap,
+          onHover: (v) => hover.value = v,
+          child: Obx(() {
+            final isHover = hover.value;
+            return Container(
+                width: 56,
+                height: 52,
+                decoration: BoxDecoration(
+                  color: selected || isHover
+                      ? MyTheme.adSidebarHover
+                      : Colors.transparent,
+                  border: Border(
+                    left: BorderSide(
+                      width: 3,
+                      color: selected ? MyTheme.accent : Colors.transparent,
+                    ),
+                  ),
+                ),
+                child: Icon(
+                  icon,
+                  size: 24,
+                  color: selected || isHover ? Colors.white : Colors.white60,
+                ),
+              );
+          }),
+        ),
+      );
+    }
+
+    return Container(
+      width: 56,
+      color: MyTheme.adSidebar,
+      child: Column(
+        children: [
+          const SizedBox(height: 8),
+          navItem(
+            icon: Icons.home_outlined,
+            tooltip: translate('Home'),
+            selected: true,
+            onTap: () {},
+          ),
+          if (!bind.isDisableSettings())
+            navItem(
+              icon: Icons.lock_outline,
+              tooltip: translate('Security'),
+              onTap: () => DesktopSettingPage.switch2page(SettingsTabKey.safety),
+            ),
+          if (!bind.isDisableSettings())
+            navItem(
+              icon: Icons.lan_outlined,
+              tooltip: translate('Network'),
+              onTap: () =>
+                  DesktopSettingPage.switch2page(SettingsTabKey.network),
+            ),
+          const Spacer(),
+          navItem(
+            icon: Icons.settings_outlined,
+            tooltip: translate('Settings'),
+            onTap: DesktopTabPage.onAddSetting,
+          ),
+          navItem(
+            icon: Icons.info_outline,
+            tooltip: translate('About'),
+            onTap: () => DesktopSettingPage.switch2page(SettingsTabKey.about),
+          ),
+          const SizedBox(height: 8),
+        ],
+      ),
+    );
   }
 
   Widget _buildBlock({required Widget child}) {
@@ -126,15 +213,35 @@ class _DesktopHomePageState extends State<DesktopHomePage>
       ]);
     }
     final textColor = Theme.of(context).textTheme.titleLarge?.color;
+    final isDark = Theme.of(context).brightness == Brightness.dark;
     return ChangeNotifierProvider.value(
       value: gFFI.serverModel,
       child: Container(
-        width: isIncomingOnly ? 280.0 : 200.0,
-        color: Theme.of(context).colorScheme.background,
+        width: isIncomingOnly ? 280.0 : 270.0,
+        margin: isIncomingOnly
+            ? null
+            : const EdgeInsets.fromLTRB(16, 16, 8, 12),
+        clipBehavior: isIncomingOnly ? Clip.none : Clip.antiAlias,
+        decoration: isIncomingOnly
+            ? BoxDecoration(color: Theme.of(context).colorScheme.background)
+            : BoxDecoration(
+                color: Theme.of(context).scaffoldBackgroundColor,
+                borderRadius: BorderRadius.circular(6),
+                boxShadow: [
+                  BoxShadow(
+                    color: Colors.black.withOpacity(isDark ? 0.3 : 0.06),
+                    blurRadius: 6,
+                    offset: const Offset(0, 1),
+                  ),
+                ],
+              ),
         child: Stack(
           children: [
             Column(
               children: [
+                // AnyDesk-style red accent strip on top of the "This Desk" card
+                if (!isIncomingOnly)
+                  Container(height: 3, color: MyTheme.accent),
                 SingleChildScrollView(
                   controller: _leftPaneScrollController,
                   child: Column(
@@ -181,15 +288,15 @@ class _DesktopHomePageState extends State<DesktopHomePage>
   buildRightPane(BuildContext context) {
     return Container(
       color: Theme.of(context).scaffoldBackgroundColor,
-      child: ConnectionPage(),
+      child: ConnectionPage(leftPane: buildLeftPane(context)),
     );
   }
 
   buildIDBoard(BuildContext context) {
     final model = gFFI.serverModel;
     return Container(
-      margin: const EdgeInsets.only(left: 20, right: 11),
-      height: 57,
+      margin: const EdgeInsets.only(left: 20, right: 11, top: 4),
+      height: 64,
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.baseline,
         textBaseline: TextBaseline.alphabetic,
@@ -238,8 +345,10 @@ class _DesktopHomePageState extends State<DesktopHomePage>
                           border: InputBorder.none,
                           contentPadding: EdgeInsets.only(top: 10, bottom: 10),
                         ),
-                        style: TextStyle(
-                          fontSize: 22,
+                        style: const TextStyle(
+                          fontSize: 26,
+                          fontWeight: FontWeight.w600,
+                          letterSpacing: 0.5,
                         ),
                       ).workaroundFreezeLinuxMint(),
                     ),
@@ -402,7 +511,10 @@ class _DesktopHomePageState extends State<DesktopHomePage>
                   alignment: Alignment.centerLeft,
                   child: Text(
                     translate("Your Desktop"),
-                    style: Theme.of(context).textTheme.titleLarge,
+                    style: Theme.of(context).textTheme.titleLarge?.copyWith(
+                        fontSize: 15,
+                        fontWeight: FontWeight.w600,
+                        letterSpacing: 0.3),
                   ),
                 ),
             ],
