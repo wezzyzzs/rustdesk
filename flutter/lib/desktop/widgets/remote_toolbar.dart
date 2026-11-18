@@ -18,6 +18,7 @@ import 'package:desktop_multi_window/desktop_multi_window.dart';
 import 'package:window_size/window_size.dart' as window_size;
 
 import '../../common.dart';
+import '../../common/formatter/id_formatter.dart';
 import '../../models/model.dart';
 import '../../models/platform_model.dart';
 import '../../common/shared_state.dart';
@@ -246,6 +247,14 @@ class ToolbarState {
   RxBool collapse = false.obs;
   RxBool hide = false.obs;
 
+  /// AnyDesk-style docked bar (full width, under the tab bar). True unless
+  /// the user opted into multi-edge floating toolbar docking.
+  RxBool docked = true.obs;
+
+  /// Whether the docked bar currently occupies space above the remote canvas.
+  bool get dockedBarVisible =>
+      docked.value && !collapse.value && !hide.value && initialized.value;
+
   // Track initialization state to prevent flickering
   final RxBool initialized = false.obs;
   bool _isInitializing = false;
@@ -324,11 +333,17 @@ class ToolbarState {
   }
 }
 
+/// Height of the AnyDesk-style docked session bar. The remote canvas is
+/// pushed down by this amount while the bar is shown.
+const double kAdDockedBarHeight = 44;
+const Color kAdDockedBarColor = Color(0xFF1E1E1E);
+
 class _ToolbarTheme {
-  static const Color blueColor = MyTheme.button;
-  static const Color hoverBlueColor = MyTheme.accent;
-  static Color inactiveColor = Colors.grey[800]!;
-  static Color hoverInactiveColor = Colors.grey[850]!;
+  // AnyDesk style: flat white icons on the dark bar, subtle hover.
+  static const Color blueColor = Colors.transparent;
+  static const Color hoverBlueColor = Color(0x33FFFFFF);
+  static Color inactiveColor = Colors.transparent;
+  static Color hoverInactiveColor = const Color(0x22FFFFFF);
 
   static const Color redColor = Colors.redAccent;
   static const Color hoverRedColor = Colors.red;
@@ -583,6 +598,7 @@ class _RemoteToolbarState extends State<RemoteToolbar> {
     _edge.value = nextEdge;
     _fraction.value = nextFraction;
     _multiEdgeEnabled.value = multiEdgeEnabled;
+    widget.state.docked.value = !multiEdgeEnabled;
     _dockingOptionsInitialized.value = true;
     _cacheToolbarDockingOptions(
       sessionId: widget.ffi.sessionId,
@@ -636,6 +652,7 @@ class _RemoteToolbarState extends State<RemoteToolbar> {
       _edge.value = cached.edge;
       _fraction.value = cached.fraction;
       _multiEdgeEnabled.value = multiEdgeEnabled;
+      widget.state.docked.value = !multiEdgeEnabled;
       _dockingOptionsInitialized.value = true;
     }
 
@@ -670,7 +687,12 @@ class _RemoteToolbarState extends State<RemoteToolbar> {
   }
 
   _debouncerHideProc(int v) {
-    if (!pin && collapse.isFalse && _isCursorOverImage && _dragging.isFalse) {
+    // The AnyDesk-style docked bar stays put; only the floating toolbar auto-hides.
+    if (!pin &&
+        _multiEdgeEnabled.value &&
+        collapse.isFalse &&
+        _isCursorOverImage &&
+        _dragging.isFalse) {
       collapse.value = true;
     }
   }
@@ -696,6 +718,14 @@ class _RemoteToolbarState extends State<RemoteToolbar> {
       }
       final edge = _edge.value;
       final isHorizontal = _isHorizontalEdge(edge);
+
+      // AnyDesk-style: full-width bar docked at the top.
+      if (!_multiEdgeEnabled.value && collapse.isFalse) {
+        return Align(
+          alignment: Alignment.topCenter,
+          child: _buildDockedBar(context),
+        );
+      }
 
       // Measure the live toolbar after every layout so the preview ghost can
       // match its actual footprint (collapsed handle vs expanded toolbar).
@@ -800,8 +830,7 @@ class _RemoteToolbarState extends State<RemoteToolbar> {
     });
   }
 
-  Widget _buildToolbar(
-      BuildContext context, _ToolbarEdge edge, bool isHorizontal) {
+  List<Widget> _buildToolbarItems(BuildContext context, _ToolbarEdge edge) {
     final List<Widget> toolbarItems = [];
     toolbarItems.add(_PinMenu(state: widget.state));
     toolbarItems.add(Obx(() {
@@ -823,7 +852,7 @@ class _RemoteToolbarState extends State<RemoteToolbar> {
       final privacyModeState = PrivacyModeState.find(widget.id);
       if ((privacyModeState.isEmpty ||
               allowDisplaySwitchInPrivacyMode(pi, privacyModeState.value)) &&
-          pi.displaysCount.value > 1) {
+          pi.displaysCount.value > 0) {
         return _MonitorMenu(
             id: widget.id,
             ffi: widget.ffi,
@@ -852,6 +881,92 @@ class _RemoteToolbarState extends State<RemoteToolbar> {
     }
     if (!isWeb) toolbarItems.add(_RecordMenu());
     toolbarItems.add(_CloseMenu(id: widget.id, ffi: widget.ffi));
+    return toolbarItems;
+  }
+
+  /// AnyDesk-style session bar: status + peer on the left, actions and
+  /// one button per remote screen on the right.
+  Widget _buildDockedBar(BuildContext context) {
+    final toolbarItems = _buildToolbarItems(context, _ToolbarEdge.top);
+    final peerName = () {
+      final alias = bind.mainGetPeerOptionSync(id: widget.id, key: 'alias');
+      final host = pi.hostname;
+      if (alias.isNotEmpty) return alias;
+      if (host.isNotEmpty) return host;
+      return '';
+    }();
+    return Material(
+      color: kAdDockedBarColor,
+      child: SizedBox(
+        width: double.infinity,
+        height: kAdDockedBarHeight,
+        child: Theme(
+          data: themeData(),
+          child: Row(
+            children: [
+              const SizedBox(width: 10),
+              const Icon(Icons.check_circle, color: Color(0xFF3FB950), size: 18),
+              const SizedBox(width: 8),
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                decoration: BoxDecoration(
+                  color: const Color(0xFF2A2A2A),
+                  borderRadius: BorderRadius.circular(3),
+                  border: Border.all(color: const Color(0xFF3A3A3A)),
+                ),
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    const Icon(Icons.desktop_windows,
+                        color: Color(0xFF3FB950), size: 16),
+                    const SizedBox(width: 8),
+                    Text(
+                      peerName.isEmpty
+                          ? formatID(widget.id)
+                          : '$peerName  ${formatID(widget.id)}',
+                      style: const TextStyle(
+                          color: Colors.white, fontSize: 14),
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                  ],
+                ),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Align(
+                  alignment: Alignment.centerRight,
+                  child: SingleChildScrollView(
+                    scrollDirection: Axis.horizontal,
+                    reverse: true,
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: toolbarItems,
+                    ),
+                  ),
+                ),
+              ),
+              Tooltip(
+                message: translate('Hide Toolbar'),
+                child: InkWell(
+                  onTap: () => collapse.value = true,
+                  child: const Padding(
+                    padding: EdgeInsets.symmetric(horizontal: 8),
+                    child: Icon(Icons.keyboard_arrow_up,
+                        color: Colors.white70, size: 20),
+                  ),
+                ),
+              ),
+              const SizedBox(width: 4),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildToolbar(
+      BuildContext context, _ToolbarEdge edge, bool isHorizontal) {
+    final toolbarItems = _buildToolbarItems(context, edge);
     final toolbarBorderRadius = BorderRadius.all(Radius.circular(4.0));
     // innerAxis: how the toolbar icons themselves flow.
     // outerAxis: how the toolbar block and the handle stack against each other
@@ -865,11 +980,7 @@ class _RemoteToolbarState extends State<RemoteToolbar> {
       elevation: _ToolbarTheme.elevation,
       shadowColor: MyTheme.color(context).shadow,
       borderRadius: toolbarBorderRadius,
-      color: Theme.of(context)
-          .menuBarTheme
-          .style
-          ?.backgroundColor
-          ?.resolve(MaterialState.values.toSet()),
+      color: kAdDockedBarColor,
       child: SingleChildScrollView(
         scrollDirection: innerAxis,
         child: Theme(
@@ -1070,8 +1181,8 @@ class _MonitorMenu extends StatelessWidget {
     required this.setRemoteState,
   }) : super(key: key);
 
-  bool get showMonitorsToolbar =>
-      bind.mainGetUserDefaultOption(key: kKeyShowMonitorsToolbar) == 'Y';
+  // AnyDesk style: always list every remote screen as its own button.
+  bool get showMonitorsToolbar => true;
 
   bool get supportIndividualWindows =>
       !isWeb && ffi.ffiModel.pi.isSupportMultiDisplay;
@@ -1139,9 +1250,7 @@ class _MonitorMenu extends StatelessWidget {
   buildOneMonitorButton(i, curDisplay) => Text(
         '${i + 1}',
         style: TextStyle(
-          color: i == curDisplay
-              ? _ToolbarTheme.blueColor
-              : _ToolbarTheme.inactiveColor,
+          color: Colors.white,
           fontSize: 12,
           fontWeight: FontWeight.bold,
         ),
@@ -1183,13 +1292,24 @@ class _MonitorMenu extends StatelessWidget {
                     alignment: AlignmentDirectional.center,
                     constraints:
                         const BoxConstraints(minHeight: _ToolbarTheme.height),
+                    // AnyDesk style: red underline under the current screen
+                    decoration: BoxDecoration(
+                      border: Border(
+                        bottom: BorderSide(
+                          color: i == display.value
+                              ? MyTheme.accent
+                              : Colors.transparent,
+                          width: 2,
+                        ),
+                      ),
+                    ),
                     child: Stack(
                       alignment: Alignment.center,
                       children: [
                         SvgPicture.asset(
                           "assets/screen.svg",
-                          colorFilter:
-                              ColorFilter.mode(Colors.white, BlendMode.srcIn),
+                          colorFilter: const ColorFilter.mode(
+                              Colors.white70, BlendMode.srcIn),
                         ),
                         Obx(() => buildOneMonitorButton(i, display.value)),
                       ],
@@ -3564,7 +3684,7 @@ class _DraggableShowHideState extends State<_DraggableShowHide> {
     const double iconSize = 20;
 
     buttonWrapper(VoidCallback? onPressed, Widget child,
-        {Color hoverColor = _ToolbarTheme.blueColor}) {
+        {Color hoverColor = MyTheme.accent}) {
       final bgColor = buttonStyle.backgroundColor?.resolve({});
       return TextButton(
         onPressed: onPressed,
@@ -3788,7 +3908,7 @@ class _MinimizedMonitorSwitchButton extends StatelessWidget {
             padding: MaterialStateProperty.all(EdgeInsets.zero),
             backgroundColor: MaterialStateProperty.resolveWith((states) {
               if (states.contains(MaterialState.hovered)) {
-                return _ToolbarTheme.blueColor.withOpacity(0.15);
+                return MyTheme.accent.withOpacity(0.15);
               }
               return null;
             }),
@@ -3799,7 +3919,7 @@ class _MinimizedMonitorSwitchButton extends StatelessWidget {
               SvgPicture.asset(
                 'assets/display_switcher.svg',
                 colorFilter:
-                    ColorFilter.mode(_ToolbarTheme.blueColor, BlendMode.srcIn),
+                    ColorFilter.mode(MyTheme.accent, BlendMode.srcIn),
                 width: iconSize,
                 height: iconSize,
               ),

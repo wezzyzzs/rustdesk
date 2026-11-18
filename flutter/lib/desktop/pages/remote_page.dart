@@ -734,8 +734,14 @@ class _RemotePageState extends State<RemotePage>
     bodyWidget() {
       return Stack(
         children: [
-          Container(
+          // AnyDesk style: leave room for the docked session bar.
+          Obx(() => Container(
               color: kColorCanvas,
+              padding: EdgeInsets.only(
+                  top: widget.toolbarState.dockedBarVisible &&
+                          !_ffi.inputModel.relativeMouseMode.value
+                      ? kAdDockedBarHeight
+                      : 0),
               child: RawKeyFocusScope(
                   focusNode: _rawKeyFocusNode,
                   onFocusChange: (bool imageFocused) {
@@ -759,7 +765,7 @@ class _RemotePageState extends State<RemotePage>
                     }
                   },
                   inputModel: _ffi.inputModel,
-                  child: getBodyForDesktop(context))),
+                  child: getBodyForDesktop(context)))),
           Stack(
             children: [
               _ffi.ffiModel.pi.isSet.isTrue &&
