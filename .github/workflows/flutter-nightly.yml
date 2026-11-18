@@ -1,10 +1,12 @@
 name: Flutter Nightly Build
 
 on:
-  schedule:
-    # schedule build every night
-    - cron: "0 0 * * *"
   workflow_dispatch:
+
+# Forks default GITHUB_TOKEN to read-only; the reusable build needs write
+# (release upload) or the run fails at startup.
+permissions:
+  contents: write
 
 jobs:
   run-flutter-nightly-build:
